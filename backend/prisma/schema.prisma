@@ -1,0 +1,121 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Пользователи
+model User {
+  id        Int       @id @default(autoincrement())
+  username  String    @unique
+  fullName  String?
+  email     String?   @unique
+  createdAt DateTime  @default(now())
+
+  specs    Spec[]        @relation("SpecsCreatedBy")
+  versions SpecVersion[] @relation("VersionsCreatedBy")
+}
+
+/// Карточка ТЗ
+model Spec {
+  id               Int           @id @default(autoincrement())
+  title            String
+  code             String?
+  description      String?
+  createdAt        DateTime      @default(now())
+
+  createdById      Int?
+  createdBy        User?         @relation("SpecsCreatedBy", fields: [createdById], references: [id])
+
+  versions         SpecVersion[]
+
+  // было так:
+  // currentVersionId Int?
+
+  // нужно так:
+  currentVersionId Int?          @unique
+  currentVersion   SpecVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+}
+
+/// Статусы версии
+enum SpecVersionStatus {
+  draft
+  in_review
+  approved
+  published
+  archived
+}
+
+/// Версии ТЗ
+model SpecVersion {
+  id             Int                @id @default(autoincrement())
+  spec           Spec               @relation(fields: [specId], references: [id])
+  specId         Int
+  versionNumber  Int
+  status         SpecVersionStatus  @default(draft)
+  createdAt      DateTime           @default(now())
+  comment        String?
+  plainText      String?
+
+  createdById    Int?
+  createdBy      User?              @relation("VersionsCreatedBy", fields: [createdById], references: [id])
+
+  // Связь "основано на версии"
+  basedOnVersionId Int?
+  basedOnVersion   SpecVersion?     @relation("BasedOnVersion", fields: [basedOnVersionId], references: [id])
+  derivedVersions  SpecVersion[]    @relation("BasedOnVersion")
+
+  // Шаги и переходы блок-схемы
+  steps         SpecStep[]
+  transitions   SpecStepTransition[]
+
+  // Обратная сторона связи "currentVersion" в Spec
+  currentForSpec Spec?             @relation("CurrentVersion")
+}
+
+/// Типы блоков
+enum StepType {
+  start
+  action
+  condition
+  end
+}
+
+/// Блок-схема: узлы (шаги)
+model SpecStep {
+  id          Int         @id @default(autoincrement())
+  version     SpecVersion @relation(fields: [versionId], references: [id])
+  versionId   Int
+
+  stepKey     String      // можно хранить UUID, будет стабильным ID узла в графе
+  type        StepType
+  title       String
+  description String?
+
+  posX        Float       @default(0) // позиция на канвасе
+  posY        Float       @default(0)
+
+  metadata    Json?
+
+  outgoing    SpecStepTransition[] @relation("FromStep")
+  incoming    SpecStepTransition[] @relation("ToStep")
+}
+
+/// Блок-схема: переходы (стрелки)
+model SpecStepTransition {
+  id           Int         @id @default(autoincrement())
+  version      SpecVersion @relation(fields: [versionId], references: [id])
+  versionId    Int
+
+  fromStep     SpecStep    @relation("FromStep", fields: [fromStepId], references: [id])
+  fromStepId   Int
+  toStep       SpecStep    @relation("ToStep", fields: [toStepId], references: [id])
+  toStepId     Int
+
+  label        String?
+  condition    String?
+  metadata     Json?
+}

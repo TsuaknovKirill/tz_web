@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: tz-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tz_user
+      POSTGRES_PASSWORD: tz_password
+      POSTGRES_DB: tz_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
