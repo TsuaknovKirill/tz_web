@@ -20,6 +20,7 @@ const API_BASE = "http://localhost:3000/api";
 function getNodeStyle(realType, diffStatus) {
   let base = {};
 
+
   switch (realType) {
     case "start":
       base = {
