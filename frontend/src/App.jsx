@@ -161,11 +161,12 @@ function App() {
   const [versionInfo, setVersionInfo] = useState(null);
 
   // 🔹 Diff (сравнение версий)
-  const [compareVersionId, setCompareVersionId] = useState(null);
   const [diffResult, setDiffResult] = useState(null);
 
   // 🔹 UI: доп. меню внизу сайдбара
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [pendingPushVersionId, setPendingPushVersionId] = useState(null);
 
   // 🔹 Импорт Excel
   const fileInputRef = useRef(null);
@@ -240,7 +241,6 @@ function App() {
         const versionsFromApi = res.data || [];
         setVersions(versionsFromApi);
 
-        setCompareVersionId(null);
         setDiffResult(null);
 
         if (versionsFromApi.length === 0) {
@@ -406,6 +406,11 @@ function App() {
         comment: "Сохранено из React Flow",
       });
 
+      if (pendingPushVersionId === currentVersionId && currentSpecId) {
+        await loadVersionsForSpec(currentSpecId, currentVersionId);
+        setPendingPushVersionId(null);
+      }
+
       alert("Сохранено!");
     } catch (err) {
       console.error(err);
@@ -444,7 +449,7 @@ function App() {
       const currentVersion = versions.find((v) => v.id === currentVersionId);
       if (!currentVersion) return;
 
-      await axios.post(
+      const response = await axios.post(
         `${API_BASE}/specs/${currentSpecId}/versions/${currentVersion.versionNumber}/fork`,
         {
           createdById: null,
@@ -452,7 +457,9 @@ function App() {
         }
       );
 
-      await loadVersionsForSpec(currentSpecId);
+      const newVersion = response.data;
+      setPendingPushVersionId(newVersion?.id || null);
+      await loadVersionsForSpec(currentSpecId, newVersion?.id);
       alert("Создана новая версия (черновик)");
     } catch (err) {
       console.error(err);
@@ -513,21 +520,8 @@ function App() {
     await loadVersionsForSpec(specId, spec?.currentVersionId);
   };
 
-  const handleVersionChange = async (e) => {
-    const versionId = parseInt(e.target.value, 10);
-    setCurrentVersionId(versionId);
-    setDiffResult(null);
-    await loadGraph(versionId);
-  };
-
-  const handleCompareVersionChange = (e) => {
-    const versionId = parseInt(e.target.value, 10);
-    setCompareVersionId(Number.isNaN(versionId) ? null : versionId);
-    setDiffResult(null);
-  };
-
-  const loadDiff = async () => {
-    if (!currentSpecId || !currentVersionId || !compareVersionId) {
+  const loadDiffFor = async (compareId) => {
+    if (!currentSpecId || !currentVersionId || !compareId) {
       return;
     }
 
@@ -538,7 +532,7 @@ function App() {
         `${API_BASE}/specs/${currentSpecId}/versions/compare`,
         {
           params: {
-            from: compareVersionId,
+            from: compareId,
             to: currentVersionId,
           },
         }
@@ -549,6 +543,12 @@ function App() {
       console.error(err);
       setError("Ошибка при загрузке отличий между версиями");
     }
+  };
+
+  const handleCompareWithPrevious = async (previousVersion) => {
+    if (!previousVersion) return;
+    setDiffResult(null);
+    await loadDiffFor(previousVersion.id);
   };
 
   // ================== Импорт из Excel (с ветками и критериями) ==================
@@ -924,6 +924,16 @@ function App() {
   const specTitle =
     specs.find((s) => s.id === currentSpecId)?.title || "Без названия ТЗ";
   const versionNumber = versionInfo?.versionNumber || "?";
+  const currentVersion = versions.find((v) => v.id === currentVersionId);
+  const sortedVersions = [...versions].sort(
+    (a, b) => a.versionNumber - b.versionNumber
+  );
+  const previousVersion = currentVersion
+    ? [...sortedVersions]
+        .filter((v) => v.versionNumber < currentVersion.versionNumber)
+        .pop()
+    : null;
+  const isPendingPush = pendingPushVersionId === currentVersionId;
 
   return (
     <div className="flex h-screen flex-col bg-slate-900">
@@ -947,19 +957,36 @@ function App() {
       {/* НИЖЕ – ОСНОВНОЙ ЛЕЙАУТ: ЛЕВОЕ МЕНЮ + ПРАВАЯ ОБЛАСТЬ */}
       <div className="flex flex-1 bg-slate-100 text-slate-900">
         {/* ЛЕВОЕ МЕНЮ */}
-        <aside className="flex w-80 flex-col border-r border-slate-800 bg-slate-900 text-slate-100">
+        <aside
+          className={`flex flex-col border-r border-slate-800 bg-slate-900 text-slate-100 transition-all duration-200 ${
+            sidebarCollapsed ? "w-14" : "w-80"
+          }`}
+        >
           {/* Верхняя часть: бренд + текущая версия */}
-          <div className="border-b border-slate-800 px-4 py-3">
-            <div className="text-xs text-slate-300">
-              <div className="truncate font-medium">{specTitle}</div>
-              <div className="mt-0.5 text-[11px] text-slate-400">
-                Версия v{versionNumber} · {statusText}
+          <div className="flex items-start justify-between gap-2 border-b border-slate-800 px-4 py-3">
+            {!sidebarCollapsed && (
+              <div className="text-xs text-slate-300">
+                <div className="truncate font-medium">{specTitle}</div>
+                <div className="mt-0.5 text-[11px] text-slate-400">
+                  Версия v{versionNumber} · {statusText}
+                </div>
               </div>
-            </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed((prev) => !prev)}
+              className="rounded-md bg-slate-800 px-2 py-1 text-[11px] text-slate-100 hover:bg-slate-700"
+              aria-label={
+                sidebarCollapsed ? "Развернуть меню" : "Свернуть меню"
+              }
+            >
+              {sidebarCollapsed ? "»" : "«"}
+            </button>
           </div>
 
           {/* Прокручиваемая середина */}
-          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3 text-xs">
+          {!sidebarCollapsed && (
+            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3 text-xs">
             {/* Блок выбора ТЗ */}
             <section className="space-y-1.5">
               <div className="flex items-center justify-between">
@@ -1002,47 +1029,36 @@ function App() {
               </h3>
 
               <div className="space-y-1">
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-slate-500">
-                    Текущая версия
-                  </span>
-                  <select
-                    value={currentVersionId || ""}
-                    onChange={handleVersionChange}
-                    className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500"
-                  >
-                    {versions.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        v{v.versionNumber} ({v.status})
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-2 text-[11px] text-slate-200">
+                  <div className="text-[10px] uppercase text-slate-500">
+                    Сейчас открыта
+                  </div>
+                  <div className="mt-1 flex items-center justify-between">
+                    <span className="font-semibold">
+                      v{versionNumber || "—"}
+                    </span>
+                    <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-300">
+                      {statusText}
+                    </span>
+                  </div>
+                </div>
 
-                <label className="flex flex-col gap-1">
+                <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-slate-500">
-                    Сравнить с версией
+                    Текущая версия (актуальная)
                   </span>
-                  <select
-                    value={compareVersionId || ""}
-                    onChange={handleCompareVersionChange}
-                    className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500"
-                  >
-                    <option value="">(пусто)</option>
-                    {versions.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        v{v.versionNumber} ({v.status})
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <div className="rounded-md border border-slate-800 bg-slate-900/80 px-2 py-1 text-xs text-slate-200">
+                    v{versionNumber} · {statusText}
+                  </div>
+                </div>
 
                 <button
-                  onClick={loadDiff}
-                  disabled={!currentVersionId || !compareVersionId}
-                  className="mt-1 w-full rounded-md bg-sky-600 px-2 py-1.5 text-[11px] font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
+                  type="button"
+                  onClick={() => handleCompareWithPrevious(previousVersion)}
+                  disabled={!previousVersion}
+                  className="w-full rounded-md bg-sky-600 px-2 py-1.5 text-[11px] font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Показать отличия
+                  Сравнить с предыдущей
                 </button>
 
                 <button
@@ -1050,8 +1066,14 @@ function App() {
                   disabled={!currentVersionId}
                   className="mt-1 w-full rounded-md bg-slate-800 px-2 py-1.5 text-[11px] font-medium text-slate-100 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Новая версия (черновик)
+                  Создать новую версию
                 </button>
+
+                {isPendingPush && (
+                  <div className="text-[10px] text-slate-400">
+                    Сохранение отправит новую версию автоматически.
+                  </div>
+                )}
               </div>
             </section>
 
@@ -1129,44 +1151,47 @@ function App() {
               </div>
             </section>
           </div>
+          )}
 
           {/* Низ меню: доп. опции + ошибки */}
-          <div className="border-t border-slate-800 px-4 py-3 text-[11px]">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-500">Дополнительно</span>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setHeaderMenuOpen((prev) => !prev)}
-                  className="rounded-md bg-slate-800 px-2 py-1 text-[11px] text-slate-100 hover:bg-slate-700"
-                >
-                  Меню
-                </button>
-                {headerMenuOpen && (
-                  <div className="dropdown-anim absolute right-0 bottom-7 z-20 w-44 rounded-md bg-slate-800 text-[11px] text-slate-100 shadow-lg ring-1 ring-black/20">
-                    <button
-                      type="button"
-                      className="block w-full px-3 py-1.5 text-left hover:bg-slate-700"
-                    >
-                      Экспорт YAML (скоро)
-                    </button>
-                    <button
-                      type="button"
-                      className="block w-full px-3 py-1.5 text-left hover:bg-slate-700"
-                    >
-                      Дублировать ТЗ (скоро)
-                    </button>
-                  </div>
-                )}
+          {!sidebarCollapsed && (
+            <div className="border-t border-slate-800 px-4 py-3 text-[11px]">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Дополнительно</span>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setHeaderMenuOpen((prev) => !prev)}
+                    className="rounded-md bg-slate-800 px-2 py-1 text-[11px] text-slate-100 hover:bg-slate-700"
+                  >
+                    Меню
+                  </button>
+                  {headerMenuOpen && (
+                    <div className="dropdown-anim absolute right-0 bottom-7 z-20 w-44 rounded-md bg-slate-800 text-[11px] text-slate-100 shadow-lg ring-1 ring-black/20">
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-1.5 text-left hover:bg-slate-700"
+                      >
+                        Экспорт YAML (скоро)
+                      </button>
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-1.5 text-left hover:bg-slate-700"
+                      >
+                        Дублировать ТЗ (скоро)
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {error && (
-              <div className="mt-2 rounded-md border border-red-400 bg-red-100 px-2 py-1.5 text-[11px] text-red-700">
-                {error}
-              </div>
-            )}
-          </div>
+              {error && (
+                <div className="mt-2 rounded-md border border-red-400 bg-red-100 px-2 py-1.5 text-[11px] text-red-700">
+                  {error}
+                </div>
+              )}
+            </div>
+          )}
         </aside>
 
         {/* ПРАВАЯ ЧАСТЬ: только схема без нижней панели отличий */}
